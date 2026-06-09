@@ -1,0 +1,11 @@
+requested_code,resolved_code,basis,error_rate,reason
+BB90,90_8_10,X,0.001,"Expected one path for 'circuit=bicycle_bivariate_90_8_10_memory_X,*error_rate=0.001,*.stim', found 0"
+BB90,90_8_10,Z,0.001,"Expected one path for 'circuit=bicycle_bivariate_90_8_10_memory_Z,*error_rate=0.001,*.stim', found 0"
+BB108,108_8_10,X,0.001,"Expected one path for 'circuit=bicycle_bivariate_108_8_10_memory_X,*error_rate=0.001,*.stim', found 0"
+BB108,108_8_10,Z,0.001,"Expected one path for 'circuit=bicycle_bivariate_108_8_10_memory_Z,*error_rate=0.001,*.stim', found 0"
+BB360,360,X,0.001,"Expected one path for 'circuit=bicycle_bivariate_360_memory_X,*error_rate=0.001,*.stim', found 0"
+BB360,360,Z,0.001,"Expected one path for 'circuit=bicycle_bivariate_360_memory_Z,*error_rate=0.001,*.stim', found 0"
+BB648,648,X,0.001,"Expected one path for 'circuit=bicycle_bivariate_648_memory_X,*error_rate=0.001,*.stim', found 0"
+BB648,648,Z,0.001,"Expected one path for 'circuit=bicycle_bivariate_648_memory_Z,*error_rate=0.001,*.stim', found 0"
+BB756,756,X,0.001,"Expected one path for 'circuit=bicycle_bivariate_756_memory_X,*error_rate=0.001,*.stim', found 0"
+BB756,756,Z,0.001,"Expected one path for 'circuit=bicycle_bivariate_756_memory_Z,*error_rate=0.001,*.stim', found 0"

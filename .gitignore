@@ -182,6 +182,10 @@ export
 
 */.jupyter_ystore.db
 
+# Local paper source used for Relay-BP FPGA latency analysis.
+arxiv-2510.21600-source/
+arxiv-2510.21600-source.tar
+
 
 # Rust Gitignore
 # This file should only ignore things that are generated during a `x.py` build,
