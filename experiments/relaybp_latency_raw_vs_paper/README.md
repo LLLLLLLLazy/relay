@@ -37,6 +37,35 @@ especially the low-logic memory-strength multiply and sliding-window reference
 implementation.  These proxy modes are useful to diagnose the gap, but they are
 not a substitute for the authors' custom integer/windowing reference model.
 
+## Paper-alignment switches
+
+The experiment exposes the paper-sensitive parameters explicitly:
+
+| Paper parameter | Switch |
+| --- | --- |
+| Relay-BP solution count `S` | `--relay-solutions 1` or `--stop-nconv 1` |
+| `beta_int in [3,10]`, `M=8` | `--gamma-mode beta_int --beta-int-low 3 --beta-int-high 10 --memory-strength-scale 8` |
+| `alpha(t)=1-2^-t` | `--alpha-mode paper_ramp` |
+| closest exposed `int4.2.8` proxy | `--paper-int4-2-8-proxy` |
+
+Shortcut:
+
+```bash
+--paper-low-latency-params
+```
+
+sets `S=1`, `beta_int in [3,10]`, `M=8`, and the paper alpha ramp.
+The stronger
+
+```bash
+--paper-int4-2-8-proxy
+```
+
+also sets the I64 log-domain scale to 2 and clipping to 15.  This still does
+not reproduce the full FPGA reference because the relay Python binding does not
+expose the paper's low-logic memory-strength multiply or separate all hardware
+integer paths.
+
 ## Current gross check
 
 The best current repo-level proxy is `i64_scale8_wide_proxy`.  It does not
@@ -52,6 +81,60 @@ With 5000 shots on `144_12_12` X/Z:
 This is the reason the `i64_scale8_wide_proxy` numbers below are treated as the
 current usable estimates.  The `paper_calibrated_*` columns remain diagnostics,
 not the primary result.
+
+With the low-latency Relay-BP-1 shortcut:
+
+```bash
+.venv/bin/python experiments/relaybp_latency_raw_vs_paper/run_experiment.py \
+  --codes BB144 \
+  --modes i64_scale8_wide_proxy \
+  --shots 1000 \
+  --paper-low-latency-params \
+  --output-csv experiments/relaybp_latency_raw_vs_paper/results_gross_paper_low_latency_i64_scale8_1000.csv
+```
+
+the gross code raw average is 4.844 iterations, or 9.688 ns/round.  This should
+be compared with the paper's Relay-BP-1 low-latency statement of less than 10
+iterations, not with the separate 20-iteration / 40 ns/round gross check.
+
+## Gong-generated BB144 comparison
+
+The relay-native `144_12_12` inputs under `tests/testdata/bicycle_bivariate/`
+are left untouched.  A separate Gong-generated `144_12_12` input was generated
+under `generated_bicycle_bivariate/`:
+
+```bash
+.venv/bin/python experiments/relaybp_latency_raw_vs_paper/generate_gong_bb_stim.py \
+  --codes BB144
+```
+
+Run command for the 40 ns gross-runtime comparison:
+
+```bash
+.venv/bin/python experiments/relaybp_latency_raw_vs_paper/run_experiment.py \
+  --testdata-dir experiments/relaybp_latency_raw_vs_paper/generated_bicycle_bivariate \
+  --codes BB144 \
+  --modes i64_scale8_wide_proxy \
+  --shots 5000 \
+  --skip-basis-filter \
+  --output-csv experiments/relaybp_latency_raw_vs_paper/results_gong_bb144_i64_scale8_5000.csv
+```
+
+Measured at `p=0.001`, 5000 shots:
+
+| Input | Basis | Raw avg iter | Raw ns/round |
+| --- | --- | ---: | ---: |
+| relay-native | X | 21.1530 | 42.306 |
+| relay-native | Z | 21.6732 | 43.346 |
+| Gong-generated | X | 19.6762 | 39.352 |
+| Gong-generated | Z | 20.3766 | 40.753 |
+
+The Gong-generated `144_12_12` average is 20.0264 iterations, or
+40.053 ns/round, which is almost exactly the paper's 20-iteration /
+40 ns/round gross-runtime target.
+
+With `--paper-low-latency-params`, the Gong-generated `144_12_12` average is
+4.277 iterations, or 8.554 ns/round.
 
 ## Requested BB sizes
 
@@ -94,9 +177,9 @@ Input status for the full requested set:
 | BB108 | `108_8_10` | measured with Gong-generated `.stim` circuits |
 | BB144 | `144_12_12` | measured |
 | BB288 | `288_12_18` | measured |
-| BB360 | `360` | missing local `.stim` memory circuits |
-| BB648 | `648` | missing local `.stim` memory circuits |
-| BB756 | `756` | missing local `.stim` memory circuits |
+| BB360 | `360_12_24` | measured with generated `.stim` circuits |
+| BB648 | `648_12_30` | measured with generated `.stim` circuits |
+| BB756 | `756_16_34` | measured with generated `.stim` circuits |
 
 ## Gong-generated BB90 and BB108
 
@@ -133,3 +216,40 @@ Measured at `p=0.001`, 1000 shots:
 These rows intentionally do not include `paper_calibrated_*` values because the
 Gong-generated input directory for this run contains only BB90 and BB108, not a
 same-source BB144 gross check.  The primary latency remains the raw value.
+
+## Generated BB360, BB648, and BB756
+
+`BB360`, `BB648`, and `BB756` were generated into the same
+`generated_bicycle_bivariate/` directory.  The generated files are already
+single-basis `memory_X` or `memory_Z` circuits, so the large-code run uses
+`--skip-basis-filter` to avoid an expensive detector sensitivity pass.
+
+Generation command:
+
+```bash
+.venv/bin/python experiments/relaybp_latency_raw_vs_paper/generate_gong_bb_stim.py \
+  --codes BB360,BB648,BB756
+```
+
+Run command:
+
+```bash
+.venv/bin/python experiments/relaybp_latency_raw_vs_paper/run_experiment.py \
+  --testdata-dir experiments/relaybp_latency_raw_vs_paper/generated_bicycle_bivariate \
+  --codes BB360,BB648,BB756 \
+  --modes i64_scale8_wide_proxy \
+  --shots 1000 \
+  --skip-basis-filter \
+  --output-csv experiments/relaybp_latency_raw_vs_paper/results_gong_bb360_bb648_bb756_i64_scale8.csv
+```
+
+Measured at `p=0.001`, 1000 shots:
+
+| Code | Basis | Rounds | Raw avg iter | Raw window ns | Raw ns/round |
+| --- | --- | ---: | ---: | ---: | ---: |
+| BB360 (`360_12_24`) | X | 24 | 46.287 | 1110.888 | 46.287 |
+| BB360 (`360_12_24`) | Z | 24 | 47.643 | 1143.432 | 47.643 |
+| BB648 (`648_12_30`) | X | 30 | 68.392 | 1641.408 | 54.714 |
+| BB648 (`648_12_30`) | Z | 30 | 70.370 | 1688.880 | 56.296 |
+| BB756 (`756_16_34`) | X | 34 | 75.385 | 1809.240 | 53.213 |
+| BB756 (`756_16_34`) | Z | 34 | 79.423 | 1906.152 | 56.063 |

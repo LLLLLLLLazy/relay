@@ -1,0 +1,7 @@
+mode,code,basis,rounds,shots,success_rate,raw_avg_iterations,raw_median_iterations,raw_p90_iterations,raw_p99_iterations,raw_max_iterations,raw_cpu_window_latency_ns,raw_cpu_latency_ns_per_round,paper_calibrated_avg_iterations,paper_calibrated_window_latency_ns,paper_calibrated_latency_ns_per_round,gross_iteration_scale,detectors,error_variables,edges,max_check_degree,max_variable_degree,cpu_decode_seconds
+i64_scale8_wide_proxy,360_12_24,X,24,1,1.0,48.0,48.0,48.0,48.0,48,1152.0,48.0,,,,,4500,43560,152280,35,6,0.03896820801310241
+i64_scale8_wide_proxy,360_12_24,Z,24,1,1.0,28.0,28.0,28.0,28.0,28,672.0,28.0,,,,,4500,43560,152280,35,6,0.025283208000473678
+i64_scale8_wide_proxy,648_12_30,X,30,1,1.0,48.0,48.0,48.0,48.0,48,1152.0,38.4,,,,,10044,97848,342144,35,6,0.0876387080643326
+i64_scale8_wide_proxy,648_12_30,Z,30,1,1.0,48.0,48.0,48.0,48.0,48,1152.0,38.4,,,,,10044,97848,342144,35,6,0.09244504198431969
+i64_scale8_wide_proxy,756_16_34,X,34,1,1.0,61.0,61.0,61.0,61.0,61,1464.0,43.05882352941177,,,,,13230,129276,452088,35,6,0.15047091606538743
+i64_scale8_wide_proxy,756_16_34,Z,34,1,1.0,56.0,56.0,56.0,56.0,56,1344.0,39.529411764705884,,,,,13230,129276,452088,35,6,0.14389125001616776

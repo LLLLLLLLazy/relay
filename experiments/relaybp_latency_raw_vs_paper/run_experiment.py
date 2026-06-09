@@ -36,6 +36,7 @@ from testdata import filter_detectors_by_basis
 
 PAPER_ITERATION_NS = 24.0
 PAPER_GROSS_AVG_ITERATIONS = 20.0
+PAPER_RELAY1_MAX_AVG_ITERATIONS = 10.0
 
 CODE_ALIASES = {
     "18": "18_4_3",
@@ -50,6 +51,12 @@ CODE_ALIASES = {
     "BB144": "144_12_12",
     "288": "288_12_18",
     "BB288": "288_12_18",
+    "360": "360_12_24",
+    "BB360": "360_12_24",
+    "648": "648_12_30",
+    "BB648": "648_12_30",
+    "756": "756_16_34",
+    "BB756": "756_16_34",
 }
 
 
@@ -68,6 +75,15 @@ class Result:
     basis: str
     rounds: int
     shots: int
+    relay_solutions: int
+    gamma_mode: str
+    beta_int_low: int | None
+    beta_int_high: int | None
+    memory_strength_scale: int | None
+    alpha_mode: str
+    alpha_value: float | None
+    i64_data_scale_value: float | None
+    i64_max_data_value: float | None
     success_rate: float
     raw_avg_iterations: float
     raw_median_iterations: float
@@ -112,10 +128,72 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pre-iter", type=int, default=80)
     parser.add_argument("--num-sets", type=int, default=600)
     parser.add_argument("--set-max-iter", type=int, default=60)
-    parser.add_argument("--stop-nconv", type=int, default=5)
+    parser.add_argument(
+        "--stop-nconv",
+        "--relay-solutions",
+        dest="stop_nconv",
+        type=int,
+        default=5,
+        help=(
+            "Relay-BP S parameter: stop after this many converged solutions. "
+            "The paper's low-latency Relay-BP-1 setting corresponds to 1."
+        ),
+    )
     parser.add_argument("--gamma0", type=float, default=0.125)
     parser.add_argument("--gamma-low", type=float, default=-0.24)
     parser.add_argument("--gamma-high", type=float, default=0.66)
+    parser.add_argument(
+        "--gamma-mode",
+        choices=("continuous", "beta_int"),
+        default="continuous",
+        help=(
+            "Use continuous random gamma values, or paper-style beta_int "
+            "quantization where gamma = 1 - beta_int / M."
+        ),
+    )
+    parser.add_argument("--memory-strength-scale", type=int, default=8)
+    parser.add_argument("--beta-int-low", type=int, default=3)
+    parser.add_argument("--beta-int-high", type=int, default=10)
+    parser.add_argument(
+        "--alpha-mode",
+        choices=("paper_ramp", "one", "constant"),
+        default="paper_ramp",
+        help=(
+            "paper_ramp uses alpha(t)=1-2^-t; one disables scaling; "
+            "constant uses --alpha-value."
+        ),
+    )
+    parser.add_argument("--alpha-value", type=float, default=1.0)
+    parser.add_argument("--alpha-iteration-scaling-factor", type=float, default=1.0)
+    parser.add_argument(
+        "--i64-data-scale-value",
+        type=float,
+        default=None,
+        help="Override I64 log-domain scale S. int4.2.8 proxy uses S=2.",
+    )
+    parser.add_argument(
+        "--i64-max-data-value",
+        type=float,
+        default=None,
+        help="Override I64 clipping magnitude. int4 proxy previously used 15.",
+    )
+    parser.add_argument(
+        "--paper-low-latency-params",
+        action="store_true",
+        help=(
+            "Shortcut for the paper low-latency Relay-BP-1 settings: "
+            "S=1, beta_int in [3,10] with M=8, and paper alpha ramp."
+        ),
+    )
+    parser.add_argument(
+        "--paper-int4-2-8-proxy",
+        action="store_true",
+        help=(
+            "Shortcut for the closest exposed int4.2.8 I64 proxy: "
+            "--paper-low-latency-params plus I64 S=2 and clip=15. "
+            "This is still a proxy, not the paper's full FPGA arithmetic."
+        ),
+    )
     parser.add_argument("--gross-tolerance", type=float, default=0.10)
     parser.add_argument(
         "--modes",
@@ -141,7 +219,32 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Skip missing code/basis inputs and record them in --missing-csv.",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--skip-basis-filter",
+        action="store_true",
+        help=(
+            "Do not call filter_detectors_by_basis. Use only for inputs that are "
+            "already generated as single-basis memory circuits."
+        ),
+    )
+    args = parser.parse_args()
+    apply_parameter_shortcuts(args)
+    return args
+
+
+def apply_parameter_shortcuts(args: argparse.Namespace) -> None:
+    if args.paper_int4_2_8_proxy:
+        args.paper_low_latency_params = True
+        args.i64_data_scale_value = 2.0
+        args.i64_max_data_value = 15.0
+
+    if args.paper_low_latency_params:
+        args.stop_nconv = 1
+        args.gamma_mode = "beta_int"
+        args.memory_strength_scale = 8
+        args.beta_int_low = 3
+        args.beta_int_high = 10
+        args.alpha_mode = "paper_ramp"
 
 
 def split_csv(value: str) -> list[str]:
@@ -172,9 +275,10 @@ def find_case(testdata_dir: Path, code: str, basis: str, error_rate: str) -> Cas
     return Case(code=code, basis=basis, path=paths[0], rounds=int(rounds_match.group(1)))
 
 
-def load_case(case: Case) -> tuple[stim.Circuit, CheckMatrices]:
+def load_case(case: Case, *, skip_basis_filter: bool = False) -> tuple[stim.Circuit, CheckMatrices]:
     circuit = stim.Circuit.from_file(case.path)
-    circuit = filter_detectors_by_basis(circuit, case.basis)
+    if not skip_basis_filter:
+        circuit = filter_detectors_by_basis(circuit, case.basis)
     matrices = CheckMatrices.from_dem(circuit.detector_error_model(decompose_errors=False))
     return circuit, matrices
 
@@ -193,29 +297,109 @@ def matrix_stats(check_matrix) -> tuple[int, int, int, int, int]:
     )
 
 
-def quantized_beta8_gammas(
+def quantized_beta_gammas(
     *,
     num_sets: int,
     num_errors: int,
     seed: int,
+    beta_int_low: int,
+    beta_int_high: int,
+    memory_strength_scale: int,
 ) -> np.ndarray:
-    """Generate the paper-style beta_int in [3,10], then gamma=1-beta/8."""
+    """Generate paper-style beta_int values, then gamma=1-beta_int/M."""
     rng = np.random.default_rng(seed)
-    beta_int = rng.integers(3, 11, size=(num_sets, num_errors), dtype=np.int16)
-    return 1.0 - beta_int.astype(np.float64) / 8.0
+    beta_int = rng.integers(
+        beta_int_low,
+        beta_int_high + 1,
+        size=(num_sets, num_errors),
+        dtype=np.int16,
+    )
+    return 1.0 - beta_int.astype(np.float64) / float(memory_strength_scale)
+
+
+def alpha_config(args: argparse.Namespace) -> tuple[float | None, float]:
+    if args.alpha_mode == "paper_ramp":
+        return 0.0, args.alpha_iteration_scaling_factor
+    if args.alpha_mode == "one":
+        return None, args.alpha_iteration_scaling_factor
+    if args.alpha_mode == "constant":
+        return args.alpha_value, args.alpha_iteration_scaling_factor
+    raise ValueError(f"Unknown alpha mode: {args.alpha_mode}")
+
+
+def explicit_gammas_for_mode(
+    mode: str,
+    matrices: CheckMatrices,
+    args: argparse.Namespace,
+    seed: int,
+) -> np.ndarray | None:
+    if args.gamma_mode != "beta_int" and mode != "fp64_beta8_gamma":
+        return None
+    return quantized_beta_gammas(
+        num_sets=args.num_sets,
+        num_errors=matrices.check_matrix.shape[1],
+        seed=seed,
+        beta_int_low=args.beta_int_low,
+        beta_int_high=args.beta_int_high,
+        memory_strength_scale=args.memory_strength_scale,
+    )
+
+
+def i64_params(
+    args: argparse.Namespace,
+    *,
+    default_data_scale_value: float,
+    default_max_data_value: float,
+) -> tuple[float, float]:
+    data_scale_value = (
+        default_data_scale_value
+        if args.i64_data_scale_value is None
+        else args.i64_data_scale_value
+    )
+    max_data_value = (
+        default_max_data_value
+        if args.i64_max_data_value is None
+        else args.i64_max_data_value
+    )
+    return data_scale_value, max_data_value
+
+
+def effective_gamma_mode(mode: str, args: argparse.Namespace) -> str:
+    if args.gamma_mode == "beta_int" or mode == "fp64_beta8_gamma":
+        return "beta_int"
+    return "continuous"
+
+
+def effective_i64_params(mode: str, args: argparse.Namespace) -> tuple[float | None, float | None]:
+    if mode == "i64_scale2_int4_proxy":
+        return i64_params(
+            args,
+            default_data_scale_value=2.0,
+            default_max_data_value=15.0,
+        )
+    if mode == "i64_scale8_wide_proxy":
+        return i64_params(
+            args,
+            default_data_scale_value=8.0,
+            default_max_data_value=127.0,
+        )
+    return None, None
 
 
 def build_decoder(mode: str, matrices: CheckMatrices, args: argparse.Namespace, seed: int):
+    alpha, alpha_iteration_scaling_factor = alpha_config(args)
+    explicit_gammas = explicit_gammas_for_mode(mode, matrices, args, seed)
     base_kwargs = dict(
         check_matrix=matrices.check_matrix,
         error_priors=matrices.error_priors,
-        alpha=0.0,
-        alpha_iteration_scaling_factor=1.0,
+        alpha=alpha,
+        alpha_iteration_scaling_factor=alpha_iteration_scaling_factor,
         gamma0=args.gamma0,
         pre_iter=args.pre_iter,
         num_sets=args.num_sets,
         set_max_iter=args.set_max_iter,
         gamma_dist_interval=(args.gamma_low, args.gamma_high),
+        explicit_gammas=explicit_gammas,
         stop_nconv=args.stop_nconv,
         stopping_criterion="nconv",
         seed=args.seed,
@@ -225,32 +409,37 @@ def build_decoder(mode: str, matrices: CheckMatrices, args: argparse.Namespace, 
         return relay_bp.RelayDecoderF64(**base_kwargs)
 
     if mode == "fp64_beta8_gamma":
-        gammas = quantized_beta8_gammas(
-            num_sets=args.num_sets,
-            num_errors=matrices.check_matrix.shape[1],
-            seed=seed,
-        )
-        return relay_bp.RelayDecoderF64(**base_kwargs, explicit_gammas=gammas)
+        return relay_bp.RelayDecoderF64(**base_kwargs)
 
     if mode == "i64_scale2_int4_proxy":
+        data_scale_value, max_data_value = i64_params(
+            args,
+            default_data_scale_value=2.0,
+            default_max_data_value=15.0,
+        )
         return relay_bp.RelayDecoderI64(
             **base_kwargs,
-            data_scale_value=2.0,
-            max_data_value=15.0,
+            data_scale_value=data_scale_value,
+            max_data_value=max_data_value,
         )
 
     if mode == "i64_scale8_wide_proxy":
+        data_scale_value, max_data_value = i64_params(
+            args,
+            default_data_scale_value=8.0,
+            default_max_data_value=127.0,
+        )
         return relay_bp.RelayDecoderI64(
             **base_kwargs,
-            data_scale_value=8.0,
-            max_data_value=127.0,
+            data_scale_value=data_scale_value,
+            max_data_value=max_data_value,
         )
 
     raise ValueError(f"Unknown mode: {mode}")
 
 
 def run_one(case: Case, mode: str, args: argparse.Namespace, row_index: int) -> Result:
-    circuit, matrices = load_case(case)
+    circuit, matrices = load_case(case, skip_basis_filter=args.skip_basis_filter)
     detectors, error_variables, edges, max_check_degree, max_variable_degree = matrix_stats(
         matrices.check_matrix
     )
@@ -271,12 +460,26 @@ def run_one(case: Case, mode: str, args: argparse.Namespace, row_index: int) -> 
     iterations = np.array([item.iterations for item in decoded], dtype=np.float64)
     successes = np.array([item.success for item in decoded], dtype=np.bool_)
     raw_window_latency = float(iterations.mean() * PAPER_ITERATION_NS)
+    gamma_mode = effective_gamma_mode(mode, args)
+    beta_int_low = args.beta_int_low if gamma_mode == "beta_int" else None
+    beta_int_high = args.beta_int_high if gamma_mode == "beta_int" else None
+    memory_strength_scale = args.memory_strength_scale if gamma_mode == "beta_int" else None
+    i64_data_scale_value, i64_max_data_value = effective_i64_params(mode, args)
     return Result(
         mode=mode,
         code=case.code,
         basis=case.basis,
         rounds=case.rounds,
         shots=args.shots,
+        relay_solutions=args.stop_nconv,
+        gamma_mode=gamma_mode,
+        beta_int_low=beta_int_low,
+        beta_int_high=beta_int_high,
+        memory_strength_scale=memory_strength_scale,
+        alpha_mode=args.alpha_mode,
+        alpha_value=args.alpha_value if args.alpha_mode == "constant" else None,
+        i64_data_scale_value=i64_data_scale_value,
+        i64_max_data_value=i64_max_data_value,
         success_rate=float(successes.mean()),
         raw_avg_iterations=float(iterations.mean()),
         raw_median_iterations=float(np.median(iterations)),
@@ -348,7 +551,24 @@ def write_missing_csv(path: Path, missing: list[MissingInput]) -> None:
 
 def print_summary(results: list[Result], checks: dict[str, tuple[float, float]], tolerance: float) -> None:
     for mode, (gross_avg, scale) in sorted(checks.items()):
+        gross_results = [
+            result
+            for result in results
+            if result.mode == mode and result.code == "144_12_12"
+        ]
+        relay_solutions = gross_results[0].relay_solutions if gross_results else None
         raw_latency = gross_avg * PAPER_ITERATION_NS / 12.0
+        if relay_solutions == 1:
+            status = "PASS" if gross_avg < PAPER_RELAY1_MAX_AVG_ITERATIONS else "FAIL"
+            print(
+                f"{mode}: gross_raw_avg_iterations={gross_avg:.3f}, "
+                f"gross_raw_latency={raw_latency:.3f} ns/round, "
+                f"relay_bp_1_reference=<10 iterations, "
+                f"scale_if_calibrated_to_20={scale:.6f}, "
+                f"raw_check={status}"
+            )
+            continue
+
         rel_error = abs(gross_avg - PAPER_GROSS_AVG_ITERATIONS) / PAPER_GROSS_AVG_ITERATIONS
         status = "PASS" if rel_error <= tolerance else "FAIL"
         print(
